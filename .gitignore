@@ -3,3 +3,5 @@
 /src/__pycache__
 *.lock
 *.pyc
+poetry.lock
+poetry.lock
