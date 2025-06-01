@@ -1,25 +1,41 @@
-[project]
+[tool.poetry]
 name = "stock-predictions"
 version = "0.1.0"
-description = ""
-authors = [
-    {name = "Tobi Adegunloye",email = "Oloruntobiadg@gmail.com"}
-]
+description = "A FastAPI-based stock prediction and recommendation API"
+authors = ["Tobi Adegunloye <Oloruntobiadg@gmail.com>"]
 readme = "README.md"
-requires-python = ">=3.13,<4.0"
-dependencies = [
-    "fastapi[standard] (>=0.115.11,<0.116.0)",
-    "poetry (>=2.1.1,<3.0.0)",
-    "alembic (>=1.15.1,<2.0.0)",
-    "psycopg (>=3.2.6,<4.0.0)",
-    "psycopg2 (>=2.9.10,<3.0.0)"
-]
+packages = [{include = "src"}]
 
-[tool.poetry]
-packages = []
-package-mode = false
+[tool.poetry.dependencies]
+python = "^3.11"
+fastapi = "^0.115.11"
+uvicorn = {extras = ["standard"], version = "^0.34.0"}
+python-dotenv = "^1.0.0"
+sqlalchemy = "^2.0.23"
+psycopg2-binary = "^2.9.9"
+pandas = "^2.1.3"
+numpy = "^2.2.6"
+scikit-learn = "^1.3.2"
+python-jose = {extras = ["cryptography"], version = "^3.3.0"}
+passlib = {extras = ["bcrypt"], version = "^1.7.4"}
+python-multipart = "^0.0.20"
+alembic = "^1.12.1"
+pydantic = "^2.5.2"
+pydantic-settings = "^2.0.3"
+python-dateutil = "^2.8.2"
+pytz = "^2025.2"
 
+# Development dependencies
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.3.5"
+pytest-cov = "^6.1.1"
+pytest-timeout = "^2.1.0"
+httpx = "^0.28.1"
+black = "^25.1.0"
+isort = "^6.0.1"
+flake8 = "^7.2.0"
+mypy = "^1.5.1"
 
 [build-system]
-requires = ["poetry-core>=2.0.0,<3.0.0"]
+requires = ["poetry-core>=2.0.0"]
 build-backend = "poetry.core.masonry.api"
