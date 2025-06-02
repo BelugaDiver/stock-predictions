@@ -4,6 +4,7 @@ from typing import Optional
 class Settings(BaseSettings):
     PROJECT_NAME: str = "Stock Prediction API"
     VERSION: str = "1.0.0"
+    ENVIRONMENT: str = "development"
     API_PREFIX: str = "/api"
     
     # Database
