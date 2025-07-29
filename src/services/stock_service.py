@@ -8,32 +8,20 @@ import pandas as pd
 import numpy as np
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.preprocessing import MinMaxScaler
+import yfinance as yf
 
 class StockService:
-    def __init__(self, db: Session):
-        self.db = db
+    def __init__(self):
+        pass
     
-    def get_stock_data(self, ticker: str, start_date: date, end_date: date) -> List[Stock]:
-        """Retrieve stock data for a given ticker and date range"""
-        stocks = self.db.query(Daily).filter(
-            Daily.ticker == ticker,
-            Daily.date_ >= start_date,
-            Daily.date_ <= end_date
-        ).order_by(Daily.date_).all()
-        
-        return [
-            Stock(
-                id=stock.id,
-                ticker=stock.ticker,
-                date=stock.date_,
-                time=stock.time_,
-                open=stock.open_,
-                high=stock.high,
-                low=stock.low,
-                close=stock.close_,
-                volume=int(stock.vol.replace(',', ''))
-            ) for stock in stocks
-        ]
+    def get_stock_data(self, ticker: str, start_date: date, end_date: date) -> pd.DataFrame:
+        """Retrieve stock data for a given ticker and date range using Yahoo Finance, returns a DataFrame"""
+        df = yf.download(ticker, start=start_date, end=end_date + timedelta(days=1), progress=False)
+        if df.empty:
+            return pd.DataFrame()
+        df = df.reset_index()
+        df['Ticker'] = ticker
+        return df
     
     def predict_stock_price(
         self, 
@@ -57,17 +45,17 @@ class StockService:
         start_date = end_date - timedelta(days=lookback_days)
         
         stocks = self.get_stock_data(ticker, start_date, end_date)
-        if not stocks:
+        if stocks.empty:
             return []
         
         # Prepare data for ML model
-        df = pd.DataFrame([s.dict() for s in stocks])
-        df = df.sort_values('date')
+        df = stocks.copy()
+        df = df.sort_values('Date')
         
         # Feature engineering
-        df['returns'] = df['close'].pct_change()
-        df['sma_5'] = df['close'].rolling(window=5).mean()
-        df['sma_20'] = df['close'].rolling(window=20).mean()
+        df['returns'] = df['Close'].pct_change()
+        df['sma_5'] = df['Close'].rolling(window=5).mean()
+        df['sma_20'] = df['Close'].rolling(window=20).mean()
         df['volatility'] = df['returns'].rolling(window=20).std() * np.sqrt(252)
         df = df.dropna()
         
@@ -75,9 +63,9 @@ class StockService:
             return []
         
         # Prepare features and target
-        features = ['open', 'high', 'low', 'close', 'volume', 'sma_5', 'sma_20', 'volatility']
+        features = ['Open', 'High', 'Low', 'Close', 'Volume', 'sma_5', 'sma_20', 'volatility']
         X = df[features].values
-        y = df['close'].shift(-1).dropna().values
+        y = df['Close'].shift(-1).dropna().values
         X = X[:-1]  # Remove last row as we don't have y for it
         
         # Scale features
@@ -142,27 +130,27 @@ class StockService:
         start_date = end_date - timedelta(days=60)  # 2 months of data
         
         stocks = self.get_stock_data(ticker, start_date, end_date)
-        if not stocks:
+        if stocks.empty:
             return None
             
         # Convert to DataFrame for analysis
-        df = pd.DataFrame([s.dict() for s in stocks])
-        df = df.sort_values('date')
+        df = stocks.copy()
+        df = df.sort_values('Date')
         
         # Calculate technical indicators
-        df['sma_20'] = df['close'].rolling(window=20).mean()
-        df['sma_50'] = df['close'].rolling(window=50).mean()
-        df['rsi'] = self._calculate_rsi(df['close'])
+        df['sma_20'] = df['Close'].rolling(window=20).mean()
+        df['sma_50'] = df['Close'].rolling(window=50).mean()
+        df['rsi'] = self._calculate_rsi(df['Close'])
         
         # Get latest values
         latest = df.iloc[-1]
         
         # Simple recommendation logic (can be enhanced)
-        if pd.isna(latest['sma_20']) or pd.isna(latest['sma_50']):
+        if pd.isna(latest['sma_20']).any() or pd.isna(latest['sma_50']).any():
             return None
             
         # Determine recommendation
-        price = latest['close']
+        price = latest['Close']
         sma_20 = latest['sma_20']
         sma_50 = latest['sma_50']
         rsi = latest['rsi']

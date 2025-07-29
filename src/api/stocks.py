@@ -13,7 +13,7 @@ router = APIRouter(
     responses={404: {"description": "Not found"}},
 )
 
-@router.get("/{ticker}", response_model=List[Stock])
+@router.get("/{ticker}", response_model=List[dict])
 async def get_stock_data(
     ticker: str,
     start_date: date = date.today() - timedelta(days=30),
@@ -27,11 +27,11 @@ async def get_stock_data(
     - **start_date**: Start date in YYYY-MM-DD format (default: 30 days ago)
     - **end_date**: End date in YYYY-MM-DD format (default: today)
     """
-    stock_service = StockService(db)
+    stock_service = StockService()
     stocks = stock_service.get_stock_data(ticker.upper(), start_date, end_date)
-    if not stocks:
+    if stocks.empty:
         raise HTTPException(status_code=404, detail=f"No data found for ticker {ticker} in the specified date range")
-    return stocks
+    return stocks.to_dict(orient='records')
 
 @router.post("/{ticker}/predict", response_model=List[StockPrediction])
 async def predict_stock_price(
@@ -45,7 +45,7 @@ async def predict_stock_price(
     - **ticker**: Stock ticker symbol (e.g., 'AAPL')
     - **days**: Number of days to predict (1-30)
     """
-    stock_service = StockService(db)
+    stock_service = StockService()
     predictions = stock_service.predict_stock_price(
         ticker.upper(), 
         days=min(prediction_request.days, 30)  # Cap at 30 days
@@ -68,7 +68,7 @@ async def get_stock_recommendation(
     
     - **ticker**: Stock ticker symbol (e.g., 'AAPL')
     """
-    stock_service = StockService(db)
+    stock_service = StockService()
     recommendation = stock_service.get_stock_recommendation(ticker.upper())
     
     if not recommendation:
