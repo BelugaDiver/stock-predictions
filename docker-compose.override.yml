@@ -1,0 +1,24 @@
+version: '3.8'
+
+services:
+  stock-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    volumes:
+      - ./src:/app/src:ro
+      - ./.env:/app/.env:ro
+    environment:
+      ENVIRONMENT: development
+      OTEL_CONSOLE_EXPORT: "true"
+    command: ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    
+  postgres:
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_PASSWORD: admin  # Simple password for development
+      
+  grafana:
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin  # Simple password for development

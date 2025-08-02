@@ -7,6 +7,12 @@ from ..schemas.discovery import (
     TickerSearchResult, SearchSuggestion, SectorInfo, 
     IndustryInfo, MarketCapCategory, StockSummary
 )
+from ..telemetry_decorators import (
+    trace_method, 
+    measure_yfinance_call, 
+    log_method_call,
+    time_operation
+)
 
 class DiscoveryService:
     def __init__(self):
@@ -63,6 +69,8 @@ class DiscoveryService:
             "CSCO", "AVGO", "TMO", "ACN", "TXN", "LLY", "ABBV", "COST", "WMT"
         ]
 
+    @trace_method("search_tickers")
+    @log_method_call(include_args=True, include_result=True)
     def search_tickers(
         self, 
         query: str, 
@@ -77,21 +85,40 @@ class DiscoveryService:
         query_upper = query.upper()
         
         # First, try exact ticker match
-        try:
-            ticker_info = yf.Ticker(query_upper)
-            info = ticker_info.info
-            if info and 'longName' in info:
-                results.append(self._create_ticker_result(query_upper, info))
-        except:
-            pass
+        exact_match = self._try_exact_ticker_match(query_upper)
+        if exact_match:
+            results.append(exact_match)
         
         # Search through popular tickers
+        popular_matches = self._search_popular_tickers(query, query_upper, limit, results)
+        results.extend(popular_matches)
+        
+        return results[:limit]
+
+    @trace_method("try_exact_ticker_match") 
+    @measure_yfinance_call("ticker")
+    def _try_exact_ticker_match(self, ticker: str) -> Optional[TickerSearchResult]:
+        """Try to get exact ticker match"""
+        try:
+            ticker_info = yf.Ticker(ticker)
+            info = ticker_info.info
+            if info and 'longName' in info:
+                return self._create_ticker_result(ticker, info)
+        except:
+            pass
+        return None
+
+    @trace_method("search_popular_tickers")
+    def _search_popular_tickers(self, query: str, query_upper: str, limit: int, existing_results: List) -> List[TickerSearchResult]:
+        """Search through popular tickers"""
+        results = []
+        
         for ticker in self.popular_tickers:
-            if len(results) >= limit:
+            if len(existing_results) + len(results) >= limit:
                 break
                 
             # Skip if already added
-            if any(r.ticker == ticker for r in results):
+            if any(r.ticker == ticker for r in existing_results):
                 continue
                 
             # Check if ticker matches query
@@ -99,16 +126,25 @@ class DiscoveryService:
                 ticker.startswith(query_upper) or
                 self._company_name_matches(ticker, query)):
                 
-                try:
-                    ticker_info = yf.Ticker(ticker)
-                    info = ticker_info.info
-                    if info and 'longName' in info:
-                        results.append(self._create_ticker_result(ticker, info))
-                except:
-                    continue
+                ticker_result = self._get_ticker_info_safe(ticker)
+                if ticker_result:
+                    results.append(ticker_result)
         
-        return results[:limit]
+        return results
 
+    @measure_yfinance_call("ticker")
+    def _get_ticker_info_safe(self, ticker: str) -> Optional[TickerSearchResult]:
+        """Safely get ticker info with error handling"""
+        try:
+            ticker_info = yf.Ticker(ticker)
+            info = ticker_info.info
+            if info and 'longName' in info:
+                return self._create_ticker_result(ticker, info)
+        except:
+            pass
+        return None
+
+    @trace_method("get_search_suggestions")
     def get_search_suggestions(self, query: str, limit: int = 10) -> List[SearchSuggestion]:
         """
         Get search suggestions for autocomplete
@@ -120,38 +156,46 @@ class DiscoveryService:
             if len(suggestions) >= limit:
                 break
                 
-            try:
-                ticker_info = yf.Ticker(ticker)
-                info = ticker_info.info
-                
-                if not info or 'longName' not in info:
-                    continue
-                    
-                company_name = info.get('longName', '')
-                
-                # Determine match type
-                match_type = "partial"
-                if ticker == query_upper:
-                    match_type = "ticker"
-                elif ticker.startswith(query_upper):
-                    match_type = "ticker"
-                elif company_name.upper().startswith(query.upper()):
-                    match_type = "name"
-                elif query.upper() in company_name.upper():
-                    match_type = "name"
-                else:
-                    continue
-                    
-                suggestions.append(SearchSuggestion(
-                    ticker=ticker,
-                    company_name=company_name,
-                    match_type=match_type
-                ))
-            except:
-                continue
+            suggestion = self._create_suggestion_safe(ticker, query, query_upper)
+            if suggestion:
+                suggestions.append(suggestion)
                 
         return suggestions
 
+    @measure_yfinance_call("ticker")
+    def _create_suggestion_safe(self, ticker: str, query: str, query_upper: str) -> Optional[SearchSuggestion]:
+        """Safely create suggestion with error handling"""
+        try:
+            ticker_info = yf.Ticker(ticker)
+            info = ticker_info.info
+            
+            if not info or 'longName' not in info:
+                return None
+                
+            company_name = info.get('longName', '')
+            
+            # Determine match type
+            match_type = "partial"
+            if ticker == query_upper:
+                match_type = "ticker"
+            elif ticker.startswith(query_upper):
+                match_type = "ticker"
+            elif company_name.upper().startswith(query.upper()):
+                match_type = "name"
+            elif query.upper() in company_name.upper():
+                match_type = "name"
+            else:
+                return None
+                
+            return SearchSuggestion(
+                ticker=ticker,
+                company_name=company_name,
+                match_type=match_type
+            )
+        except:
+            return None
+
+    @trace_method("get_sectors")
     def get_sectors(self) -> List[SectorInfo]:
         """
         Get all available sectors with stock counts
@@ -169,6 +213,7 @@ class DiscoveryService:
         
         return sectors
 
+    @trace_method("get_sector_stocks")
     def get_sector_stocks(self, sector: str, limit: int = 50) -> List[StockSummary]:
         """
         Get stocks within a specific sector
@@ -178,15 +223,13 @@ class DiscoveryService:
         stocks = []
         
         for ticker in sector_tickers[:limit]:
-            try:
-                stock_data = self._get_stock_summary(ticker)
-                if stock_data:
-                    stocks.append(stock_data)
-            except:
-                continue
+            stock_data = self._get_stock_summary_safe(ticker)
+            if stock_data:
+                stocks.append(stock_data)
                 
         return stocks
 
+    @trace_method("get_industries")
     def get_industries(self, sector: Optional[str] = None) -> List[IndustryInfo]:
         """
         Get industries, optionally filtered by sector
@@ -216,6 +259,7 @@ class DiscoveryService:
         
         return industries
 
+    @trace_method("get_industry_stocks")
     def get_industry_stocks(self, industry: str, limit: int = 50) -> List[StockSummary]:
         """
         Get stocks within specific industry
@@ -226,15 +270,13 @@ class DiscoveryService:
         stocks = []
         
         for ticker in tickers:
-            try:
-                stock_data = self._get_stock_summary(ticker)
-                if stock_data:
-                    stocks.append(stock_data)
-            except:
-                continue
+            stock_data = self._get_stock_summary_safe(ticker)
+            if stock_data:
+                stocks.append(stock_data)
                 
         return stocks
 
+    @trace_method("get_stocks_by_market_cap")
     def get_stocks_by_market_cap(self, category: str, limit: int = 100) -> List[StockSummary]:
         """
         Get stocks by market capitalization category
@@ -254,19 +296,17 @@ class DiscoveryService:
             if len(stocks) >= limit:
                 break
                 
-            try:
-                stock_data = self._get_stock_summary(ticker)
-                if stock_data and stock_data.market_cap:
-                    market_cap_b = stock_data.market_cap / 1e9  # Convert to billions
-                    
-                    # Check if within range
-                    if market_cap_b >= min_cap and (max_cap is None or market_cap_b <= max_cap):
-                        stocks.append(stock_data)
-            except:
-                continue
+            stock_data = self._get_stock_summary_safe(ticker)
+            if stock_data and stock_data.market_cap:
+                market_cap_b = stock_data.market_cap / 1e9  # Convert to billions
+                
+                # Check if within range
+                if market_cap_b >= min_cap and (max_cap is None or market_cap_b <= max_cap):
+                    stocks.append(stock_data)
                 
         return stocks
 
+    @trace_method("get_stocks_by_price_range")
     def get_stocks_by_price_range(
         self, 
         min_price: float = 0, 
@@ -282,21 +322,45 @@ class DiscoveryService:
             if len(stocks) >= limit:
                 break
                 
-            try:
-                stock_data = self._get_stock_summary(ticker)
-                if (stock_data and 
-                    min_price <= stock_data.current_price <= max_price):
-                    stocks.append(stock_data)
-            except:
-                continue
+            stock_data = self._get_stock_summary_safe(ticker)
+            if (stock_data and 
+                min_price <= stock_data.current_price <= max_price):
+                stocks.append(stock_data)
                 
         return stocks
 
+    def _get_stock_summary_safe(self, ticker: str) -> Optional[StockSummary]:
+        """Get stock summary with error handling"""
+        try:
+            return self._get_stock_summary(ticker)
+        except:
+            return None
+
+    @trace_method("create_ticker_result")
+    @measure_yfinance_call("ticker")
     def _create_ticker_result(self, ticker: str, info: Dict[str, Any]) -> TickerSearchResult:
         """
         Create TickerSearchResult from yfinance info
         """
         # Get current price data
+        current_price, price_change, price_change_percent = self._get_price_data(ticker, info)
+
+        return TickerSearchResult(
+            ticker=ticker,
+            company_name=info.get('longName', ticker),
+            sector=info.get('sector'),
+            industry=info.get('industry'),
+            market_cap=info.get('marketCap'),
+            current_price=current_price,
+            price_change=price_change,
+            price_change_percent=price_change_percent,
+            volume=info.get('volume'),
+            exchange=info.get('exchange')
+        )
+
+    @measure_yfinance_call("ticker")
+    def _get_price_data(self, ticker: str, info: Dict[str, Any]) -> tuple:
+        """Get current price data for ticker"""
         try:
             ticker_obj = yf.Ticker(ticker)
             hist = ticker_obj.history(period="2d")
@@ -316,57 +380,45 @@ class DiscoveryService:
             current_price = info.get('currentPrice')
             price_change = info.get('change')
             price_change_percent = info.get('changePercent')
+            
+        return current_price, price_change, price_change_percent
 
-        return TickerSearchResult(
-            ticker=ticker,
-            company_name=info.get('longName', ticker),
-            sector=info.get('sector'),
-            industry=info.get('industry'),
-            market_cap=info.get('marketCap'),
-            current_price=current_price,
-            price_change=price_change,
-            price_change_percent=price_change_percent,
-            volume=info.get('volume'),
-            exchange=info.get('exchange')
-        )
-
+    @measure_yfinance_call("ticker")
     def _get_stock_summary(self, ticker: str) -> Optional[StockSummary]:
         """
         Get stock summary data
         """
-        try:
-            ticker_obj = yf.Ticker(ticker)
-            info = ticker_obj.info
-            hist = ticker_obj.history(period="2d")
-            
-            if hist.empty or not info or 'longName' not in info:
-                return None
-                
-            current_price = float(hist['Close'].iloc[-1])
-            volume = int(hist['Volume'].iloc[-1])
-            
-            price_change = 0
-            price_change_percent = 0
-            
-            if len(hist) > 1:
-                prev_price = float(hist['Close'].iloc[-2])
-                price_change = current_price - prev_price
-                price_change_percent = (price_change / prev_price) * 100
-            
-            return StockSummary(
-                ticker=ticker,
-                company_name=info.get('longName', ticker),
-                current_price=current_price,
-                price_change=price_change,
-                price_change_percent=price_change_percent,
-                volume=volume,
-                market_cap=info.get('marketCap'),
-                sector=info.get('sector'),
-                industry=info.get('industry')
-            )
-        except:
+        ticker_obj = yf.Ticker(ticker)
+        info = ticker_obj.info
+        hist = ticker_obj.history(period="2d")
+        
+        if hist.empty or not info or 'longName' not in info:
             return None
+            
+        current_price = float(hist['Close'].iloc[-1])
+        volume = int(hist['Volume'].iloc[-1])
+        
+        price_change = 0
+        price_change_percent = 0
+        
+        if len(hist) > 1:
+            prev_price = float(hist['Close'].iloc[-2])
+            price_change = current_price - prev_price
+            price_change_percent = (price_change / prev_price) * 100
+        
+        return StockSummary(
+            ticker=ticker,
+            company_name=info.get('longName', ticker),
+            current_price=current_price,
+            price_change=price_change,
+            price_change_percent=price_change_percent,
+            volume=volume,
+            market_cap=info.get('marketCap'),
+            sector=info.get('sector'),
+            industry=info.get('industry')
+        )
 
+    @measure_yfinance_call("ticker")
     def _company_name_matches(self, ticker: str, query: str) -> bool:
         """
         Check if company name matches query
