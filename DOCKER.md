@@ -12,12 +12,14 @@ This guide covers how to deploy the Stock Prediction API using Docker with full 
 ## 🚀 Quick Start
 
 ### 1. Clone and Setup
+
 ```bash
 git clone <your-repo>
 cd stock-predictions/api
 ```
 
 ### 2. Configure Environment
+
 ```bash
 # Copy and edit production environment
 cp .env.docker .env.production
@@ -28,6 +30,7 @@ notepad .env.production  # Windows
 ```
 
 **Important**: Change these values in `.env.production`:
+
 - `POSTGRES_PASSWORD`: Strong database password
 - `SECRET_KEY`: Cryptographically secure secret key
 - `GRAFANA_PASSWORD`: Grafana admin password
@@ -35,17 +38,20 @@ notepad .env.production  # Windows
 ### 3. Deploy
 
 **Linux/Mac:**
+
 ```bash
 chmod +x deploy.sh
 ./deploy.sh
 ```
 
 **Windows:**
+
 ```cmd
 deploy.bat
 ```
 
 ### 4. Verify Deployment
+
 ```bash
 # Check all services are running
 docker-compose ps
@@ -63,12 +69,12 @@ curl -X POST "http://localhost:8000/api/stocks/AAPL/predict" \
 
 | Service | URL | Credentials |
 |---------|-----|-------------|
-| **API** | http://localhost:8000 | - |
-| **API Docs** | http://localhost:8000/docs | - |
-| **Metrics** | http://localhost:8001/metrics | - |
-| **Jaeger UI** | http://localhost:16686 | - |
-| **Prometheus** | http://localhost:9090 | - |
-| **Grafana** | http://localhost:3000 | admin/admin |
+| **API** | <http://localhost:8000> | - |
+| **API Docs** | <http://localhost:8000/docs> | - |
+| **Metrics** | <http://localhost:8001/metrics> | - |
+| **Jaeger UI** | <http://localhost:16686> | - |
+| **Prometheus** | <http://localhost:9090> | - |
+| **Grafana** | <http://localhost:3000> | admin/admin |
 | **Database** | localhost:5432 | postgres/[your-password] |
 
 ## 🏗️ Architecture
@@ -100,16 +106,19 @@ curl -X POST "http://localhost:8000/api/stocks/AAPL/predict" \
 ### Environment Variables
 
 **Database:**
+
 - `POSTGRES_SERVER`: Database host (default: postgres)
 - `POSTGRES_USER`: Database username (default: postgres)
 - `POSTGRES_PASSWORD`: Database password
 - `POSTGRES_DB`: Database name (default: stock_predictions)
 
 **API Security:**
+
 - `SECRET_KEY`: JWT signing key (required)
 - `ACCESS_TOKEN_EXPIRE_MINUTES`: Token expiration (default: 1440)
 
 **Monitoring:**
+
 - `JAEGER_ENDPOINT`: Jaeger collector endpoint
 - `PROMETHEUS_PORT`: Metrics server port (default: 8001)
 - `OTEL_CONSOLE_EXPORT`: Enable console logging (default: false)
@@ -117,17 +126,21 @@ curl -X POST "http://localhost:8000/api/stocks/AAPL/predict" \
 ### Docker Compose Profiles
 
 **Development:**
+
 ```bash
 docker-compose -f docker-compose.yml -f docker-compose.override.yml up
 ```
+
 - Hot reload enabled
 - Console logging enabled
 - Development dependencies included
 
 **Production:**
+
 ```bash
 docker-compose -f docker-compose.yml up
 ```
+
 - Optimized builds
 - No hot reload
 - Production security settings
@@ -135,12 +148,14 @@ docker-compose -f docker-compose.yml up
 ## 📊 Monitoring & Observability
 
 ### Distributed Tracing (Jaeger)
-- **URL**: http://localhost:16686
+
+- **URL**: <http://localhost:16686>
 - **Features**: Request tracing, yfinance API monitoring, ML pipeline analysis
 - **Usage**: Search by service "stock-prediction-api"
 
 ### Metrics (Prometheus)
-- **URL**: http://localhost:9090
+
+- **URL**: <http://localhost:9090>
 - **Custom Metrics**:
   - `api_request_duration_seconds`: API response times
   - `yfinance_request_duration_seconds`: External API performance
@@ -148,13 +163,15 @@ docker-compose -f docker-compose.yml up
   - `yfinance_errors_total`: External API failures
 
 ### Visualization (Grafana)
-- **URL**: http://localhost:3000
+
+- **URL**: <http://localhost:3000>
 - **Login**: admin/admin (change in production)
 - **Dashboards**: Pre-configured dashboards for API and ML metrics
 
 ## 🛠️ Common Operations
 
 ### View Logs
+
 ```bash
 # All services
 docker-compose logs -f
@@ -167,6 +184,7 @@ docker-compose logs --tail=100 stock-api
 ```
 
 ### Database Operations
+
 ```bash
 # Connect to database
 docker-compose exec postgres psql -U postgres -d stock_predictions
@@ -179,6 +197,7 @@ docker-compose exec stock-api poetry run alembic revision --autogenerate -m "des
 ```
 
 ### Scaling
+
 ```bash
 # Scale API instances
 docker-compose up -d --scale stock-api=3
@@ -188,6 +207,7 @@ docker-compose -f docker-compose.yml -f docker-compose.scale.yml up -d
 ```
 
 ### Backup & Restore
+
 ```bash
 # Backup database
 docker-compose exec postgres pg_dump -U postgres stock_predictions > backup.sql
@@ -199,6 +219,7 @@ docker-compose exec -T postgres psql -U postgres stock_predictions < backup.sql
 ## 🔒 Security Considerations
 
 ### Production Checklist
+
 - [ ] Change default passwords in `.env.production`
 - [ ] Use strong `SECRET_KEY` (32+ random characters)
 - [ ] Enable HTTPS with SSL certificates
@@ -208,6 +229,7 @@ docker-compose exec -T postgres psql -U postgres stock_predictions < backup.sql
 - [ ] Regular security updates
 
 ### SSL/HTTPS Setup
+
 1. Obtain SSL certificates (Let's Encrypt recommended)
 2. Place certificates in `nginx/ssl/`
 3. Update `nginx/nginx.conf` with SSL configuration
@@ -218,6 +240,7 @@ docker-compose exec -T postgres psql -U postgres stock_predictions < backup.sql
 ### Common Issues
 
 **API not responding:**
+
 ```bash
 # Check service status
 docker-compose ps
@@ -230,6 +253,7 @@ docker-compose restart stock-api
 ```
 
 **Database connection errors:**
+
 ```bash
 # Check database status
 docker-compose exec postgres pg_isready -U postgres
@@ -243,6 +267,7 @@ docker-compose up -d postgres
 ```
 
 **Memory issues:**
+
 ```bash
 # Check resource usage
 docker stats
@@ -252,6 +277,7 @@ docker stats
 ```
 
 **Port conflicts:**
+
 ```bash
 # Check port usage
 netstat -tulpn | grep :8000
@@ -263,18 +289,21 @@ netstat -tulpn | grep :8000
 ### Performance Tuning
 
 **API Performance:**
+
 - Increase `uvicorn` workers: `--workers 4`
 - Enable connection pooling
 - Add Redis caching layer
 - Scale horizontally with load balancer
 
 **Database Performance:**
+
 - Tune PostgreSQL settings
 - Add database indices
 - Monitor query performance
 - Consider read replicas
 
 **Monitoring Overhead:**
+
 - Adjust tracing sample rates
 - Configure metric retention
 - Optimize dashboard queries
@@ -282,6 +311,7 @@ netstat -tulpn | grep :8000
 ## 📈 Scaling for Production
 
 ### Horizontal Scaling
+
 ```yaml
 # docker-compose.scale.yml
 services:
@@ -297,6 +327,7 @@ services:
 ```
 
 ### Load Testing
+
 ```bash
 # Install hey
 go install github.com/rakyll/hey@latest
@@ -312,6 +343,7 @@ hey -n 100 -c 5 -m POST -H "Content-Type: application/json" \
 ## 📞 Support
 
 For issues and questions:
+
 1. Check logs: `docker-compose logs`
 2. Review configuration files
 3. Consult monitoring dashboards
