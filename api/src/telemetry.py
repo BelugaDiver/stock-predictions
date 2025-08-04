@@ -7,7 +7,7 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExport
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader, ConsoleMetricExporter
 from opentelemetry.sdk.resources import Resource
-from opentelemetry.exporter.jaeger.thrift import JaegerExporter
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.exporter.prometheus import PrometheusMetricReader
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.instrumentation.requests import RequestsInstrumentor
@@ -15,20 +15,21 @@ from opentelemetry.instrumentation.urllib3 import URLLib3Instrumentor
 from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
 from prometheus_client import start_http_server
 import time
+from .config import settings
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=getattr(logging, settings.LOG_LEVEL.upper()))
 logger = logging.getLogger(__name__)
 
 class TelemetryConfig:
     """OpenTelemetry configuration for the Stock Prediction API"""
     
     def __init__(self):
-        self.service_name = "stock-prediction-api"
-        self.service_version = "1.0.0"
-        self.jaeger_endpoint = os.getenv("JAEGER_ENDPOINT", "http://localhost:14268/api/traces")
-        self.prometheus_port = int(os.getenv("PROMETHEUS_PORT", "8001"))
-        self.enable_console_export = os.getenv("OTEL_CONSOLE_EXPORT", "false").lower() == "true"
+        self.service_name = settings.OTEL_SERVICE_NAME
+        self.service_version = settings.OTEL_SERVICE_VERSION
+        self.jaeger_endpoint = settings.JAEGER_ENDPOINT
+        self.prometheus_port = settings.PROMETHEUS_PORT
+        self.enable_console_export = settings.OTEL_CONSOLE_EXPORT
         
         # Custom metrics
         self.meter = None
@@ -53,16 +54,17 @@ class TelemetryConfig:
         tracer_provider = TracerProvider(resource=resource)
         trace.set_tracer_provider(tracer_provider)
         
-        # Add Jaeger exporter
+        # Add OTLP exporter for Jaeger (modern approach)
         try:
-            jaeger_exporter = JaegerExporter(
+            otlp_exporter = OTLPSpanExporter(
                 endpoint=self.jaeger_endpoint,
+                headers={}
             )
-            span_processor = BatchSpanProcessor(jaeger_exporter)
+            span_processor = BatchSpanProcessor(otlp_exporter)
             tracer_provider.add_span_processor(span_processor)
-            logger.info(f"Jaeger tracing configured: {self.jaeger_endpoint}")
+            logger.info(f"OTLP tracing configured: {self.jaeger_endpoint}")
         except Exception as e:
-            logger.warning(f"Failed to configure Jaeger: {e}")
+            logger.warning(f"Failed to configure OTLP exporter: {e}")
         
         # Add console exporter for development
         if self.enable_console_export:

@@ -3,6 +3,7 @@ import pandas as pd
 import yfinance as yf
 from datetime import date, timedelta
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from ..schemas.discovery import (
     TickerSearchResult, SearchSuggestion, SectorInfo, 
     IndustryInfo, MarketCapCategory, StockSummary
@@ -69,6 +70,232 @@ class DiscoveryService:
             "CSCO", "AVGO", "TMO", "ACN", "TXN", "LLY", "ABBV", "COST", "WMT"
         ]
 
+    @trace_method("batch_fetch_ticker_info")
+    @measure_yfinance_call("batch")
+    def _batch_fetch_ticker_info(self, tickers: List[str], max_workers: int = 10) -> Dict[str, Dict[str, Any]]:
+        """
+        Batch fetch ticker information using concurrent requests with chunking strategy
+        """
+        try:
+            return self._process_ticker_chunks(tickers, max_workers)
+        except Exception:
+            # Final fallback to individual requests
+            return self._fallback_to_individual_requests(tickers, max_workers)
+
+    def _process_ticker_chunks(self, tickers: List[str], max_workers: int) -> Dict[str, Dict[str, Any]]:
+        """Process tickers in chunks of optimal size"""
+        ticker_info = {}
+        ticker_chunks = self._create_ticker_chunks(tickers)
+        
+        for chunk in ticker_chunks:
+            chunk_results = self._process_single_chunk(chunk, max_workers)
+            ticker_info.update(chunk_results)
+            
+        return ticker_info
+
+    def _create_ticker_chunks(self, tickers: List[str], chunk_size: int = 20) -> List[List[str]]:
+        """Split tickers into optimal chunks for batch processing"""
+        return [tickers[i:i + chunk_size] for i in range(0, len(tickers), chunk_size)]
+
+    def _process_single_chunk(self, chunk: List[str], max_workers: int) -> Dict[str, Dict[str, Any]]:
+        """Process a single chunk of tickers with batch download and concurrent info fetching"""
+        try:
+            return self._process_chunk_with_batch_download(chunk, max_workers)
+        except Exception:
+            # Fallback to individual requests for this chunk
+            return self._process_chunk_individually(chunk, max_workers)
+
+    def _process_chunk_with_batch_download(self, chunk: List[str], max_workers: int) -> Dict[str, Dict[str, Any]]:
+        """Process chunk using batch download for price data and concurrent info fetching"""
+        batch_data = self._download_chunk_price_data(chunk)
+        return self._fetch_chunk_info_concurrently(chunk, batch_data, max_workers)
+
+    @measure_yfinance_call("batch_download")
+    def _download_chunk_price_data(self, chunk: List[str]):
+        """Download price data for a chunk using yfinance batch download"""
+        return yf.download(chunk, period="2d", group_by="ticker", auto_adjust=True, prepost=True)
+
+    def _fetch_chunk_info_concurrently(self, chunk: List[str], batch_data, max_workers: int) -> Dict[str, Dict[str, Any]]:
+        """Fetch ticker info concurrently and merge with batch price data"""
+        ticker_info = {}
+        
+        with ThreadPoolExecutor(max_workers=min(max_workers, len(chunk))) as executor:
+            future_to_ticker = {
+                executor.submit(self._get_single_ticker_info, ticker): ticker 
+                for ticker in chunk
+            }
+            
+            for future in as_completed(future_to_ticker):
+                ticker = future_to_ticker[future]
+                try:
+                    info = future.result()
+                    if info:
+                        enriched_info = self._enrich_info_with_price_data(info, ticker, batch_data, chunk)
+                        ticker_info[ticker] = enriched_info
+                except Exception:
+                    # Log but continue with other tickers
+                    pass
+                    
+        return ticker_info
+
+    def _enrich_info_with_price_data(self, info: Dict[str, Any], ticker: str, batch_data, chunk: List[str]) -> Dict[str, Any]:
+        """Enrich ticker info with price data from batch download"""
+        if batch_data.empty:
+            return info
+            
+        ticker_data = self._extract_ticker_data_from_batch(ticker, batch_data, chunk)
+        if ticker_data is not None and not ticker_data.empty:
+            self._add_price_metrics_to_info(info, ticker_data)
+            
+        return info
+
+    def _extract_ticker_data_from_batch(self, ticker: str, batch_data, chunk: List[str]):
+        """Extract individual ticker data from batch download results"""
+        if len(chunk) == 1:
+            return batch_data
+        else:
+            return batch_data[ticker] if ticker in batch_data.columns else None
+
+    def _add_price_metrics_to_info(self, info: Dict[str, Any], ticker_data) -> None:
+        """Add price metrics (current price, change, volume) to ticker info"""
+        info['current_price'] = float(ticker_data['Close'].iloc[-1])
+        
+        if len(ticker_data) > 1:
+            prev_price = float(ticker_data['Close'].iloc[-2])
+            info['price_change'] = info['current_price'] - prev_price
+            info['price_change_percent'] = (info['price_change'] / prev_price) * 100
+            
+        if 'Volume' in ticker_data:
+            info['volume'] = int(ticker_data['Volume'].iloc[-1])
+
+    def _process_chunk_individually(self, chunk: List[str], max_workers: int) -> Dict[str, Dict[str, Any]]:
+        """Fallback: process chunk using individual ticker requests"""
+        ticker_info = {}
+        
+        with ThreadPoolExecutor(max_workers=min(max_workers, len(chunk))) as executor:
+            future_to_ticker = {
+                executor.submit(self._get_full_ticker_data, ticker): ticker 
+                for ticker in chunk
+            }
+            
+            for future in as_completed(future_to_ticker):
+                ticker = future_to_ticker[future]
+                try:
+                    info = future.result()
+                    if info:
+                        ticker_info[ticker] = info
+                except Exception:
+                    pass
+                    
+        return ticker_info
+
+    def _fallback_to_individual_requests(self, tickers: List[str], max_workers: int) -> Dict[str, Dict[str, Any]]:
+        """Final fallback: process all tickers individually with concurrency"""
+        ticker_info = {}
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_ticker = {
+                executor.submit(self._get_full_ticker_data, ticker): ticker 
+                for ticker in tickers
+            }
+            
+            for future in as_completed(future_to_ticker):
+                ticker = future_to_ticker[future]
+                try:
+                    info = future.result()
+                    if info:
+                        ticker_info[ticker] = info
+                except Exception:
+                    pass
+                    
+        return ticker_info
+
+    @measure_yfinance_call("ticker")
+    def _get_single_ticker_info(self, ticker: str) -> Optional[Dict[str, Any]]:
+        """Get basic info for a single ticker"""
+        try:
+            ticker_obj = yf.Ticker(ticker)
+            info = ticker_obj.info
+            return info if info and 'longName' in info else None
+        except:
+            return None
+
+    @measure_yfinance_call("ticker")
+    def _get_full_ticker_data(self, ticker: str) -> Optional[Dict[str, Any]]:
+        """Get full ticker data including price history"""
+        try:
+            ticker_obj = yf.Ticker(ticker)
+            info = ticker_obj.info
+            hist = ticker_obj.history(period="2d")
+            
+            if not info or 'longName' not in info:
+                return None
+                
+            # Add price data from history
+            if not hist.empty:
+                info['current_price'] = float(hist['Close'].iloc[-1])
+                info['volume'] = int(hist['Volume'].iloc[-1])
+                
+                if len(hist) > 1:
+                    prev_price = float(hist['Close'].iloc[-2])
+                    info['price_change'] = info['current_price'] - prev_price
+                    info['price_change_percent'] = (info['price_change'] / prev_price) * 100
+                    
+            return info
+        except:
+            return None
+
+    @trace_method("batch_create_ticker_results")
+    def _batch_create_ticker_results(self, ticker_info_dict: Dict[str, Dict[str, Any]]) -> List[TickerSearchResult]:
+        """Create TickerSearchResult objects from batch fetched data"""
+        results = []
+        
+        for ticker, info in ticker_info_dict.items():
+            try:
+                result = TickerSearchResult(
+                    ticker=ticker,
+                    company_name=info.get('longName', ticker),
+                    sector=info.get('sector'),
+                    industry=info.get('industry'),
+                    market_cap=info.get('marketCap'),
+                    current_price=info.get('current_price'),
+                    price_change=info.get('price_change'),
+                    price_change_percent=info.get('price_change_percent'),
+                    volume=info.get('volume'),
+                    exchange=info.get('exchange')
+                )
+                results.append(result)
+            except Exception:
+                # Skip invalid data
+                continue
+                
+        return results
+
+    @trace_method("batch_create_stock_summaries")
+    def _batch_create_stock_summaries(self, ticker_info_dict: Dict[str, Dict[str, Any]]) -> List[StockSummary]:
+        """Create StockSummary objects from batch fetched data"""
+        summaries = []
+        
+        for ticker, info in ticker_info_dict.items():
+            try:
+                summary = StockSummary(
+                    ticker=ticker,
+                    company_name=info.get('longName', ticker),
+                    current_price=info.get('current_price'),
+                    price_change=info.get('price_change'),
+                    price_change_percent=info.get('price_change_percent'),
+                    volume=info.get('volume'),
+                    market_cap=info.get('marketCap'),
+                    sector=info.get('sector'),
+                    industry=info.get('industry')
+                )
+                summaries.append(summary)
+            except Exception:
+                # Skip invalid data
+                continue
+                
+        return summaries
+
     @trace_method("search_tickers")
     @log_method_call(include_args=True, include_result=True)
     def search_tickers(
@@ -81,19 +308,61 @@ class DiscoveryService:
         """
         Search for tickers by symbol or company name
         """
-        results = []
         query_upper = query.upper()
         
-        # First, try exact ticker match
-        exact_match = self._try_exact_ticker_match(query_upper)
-        if exact_match:
-            results.append(exact_match)
+        # Find matching tickers first (without API calls)
+        matching_tickers = []
         
-        # Search through popular tickers
-        popular_matches = self._search_popular_tickers(query, query_upper, limit, results)
-        results.extend(popular_matches)
+        # Check for exact match
+        if query_upper in self.popular_tickers:
+            matching_tickers.append(query_upper)
         
-        return results[:limit]
+        # Find partial matches in popular tickers
+        for ticker in self.popular_tickers:
+            if ticker != query_upper and (
+                ticker.startswith(query_upper) or 
+                query_upper in ticker
+            ):
+                matching_tickers.append(ticker)
+                if len(matching_tickers) >= limit * 2:  # Get extra to filter later
+                    break
+        
+        # Batch fetch ticker information
+        if matching_tickers:
+            ticker_info_dict = self._batch_fetch_ticker_info(matching_tickers[:limit * 2])
+            
+            # Filter by company name if needed and create results
+            results = []
+            for ticker in matching_tickers:
+                if len(results) >= limit:
+                    break
+                    
+                if ticker in ticker_info_dict:
+                    info = ticker_info_dict[ticker]
+                    company_name = info.get('longName', '')
+                    
+                    # Check if query matches ticker or company name
+                    if (query_upper in ticker or 
+                        ticker.startswith(query_upper) or
+                        query.upper() in company_name.upper()):
+                        
+                        result = TickerSearchResult(
+                            ticker=ticker,
+                            company_name=company_name,
+                            sector=info.get('sector'),
+                            industry=info.get('industry'),
+                            market_cap=info.get('marketCap'),
+                            current_price=info.get('current_price'),
+                            price_change=info.get('price_change'),
+                            price_change_percent=info.get('price_change_percent'),
+                            volume=info.get('volume'),
+                            exchange=info.get('exchange')
+                        )
+                        results.append(result)
+            
+            return results
+        
+        return []
 
     @trace_method("try_exact_ticker_match") 
     @measure_yfinance_call("ticker")
@@ -149,18 +418,52 @@ class DiscoveryService:
         """
         Get search suggestions for autocomplete
         """
-        suggestions = []
         query_upper = query.upper()
         
+        # Find matching tickers first
+        matching_tickers = []
         for ticker in self.popular_tickers:
-            if len(suggestions) >= limit:
-                break
-                
-            suggestion = self._create_suggestion_safe(ticker, query, query_upper)
-            if suggestion:
-                suggestions.append(suggestion)
-                
-        return suggestions
+            if (query_upper in ticker or 
+                ticker.startswith(query_upper)):
+                matching_tickers.append(ticker)
+                if len(matching_tickers) >= limit * 2:
+                    break
+        
+        # Batch fetch basic info
+        if matching_tickers:
+            ticker_info_dict = self._batch_fetch_ticker_info(matching_tickers[:limit * 2])
+            
+            suggestions = []
+            for ticker in matching_tickers:
+                if len(suggestions) >= limit:
+                    break
+                    
+                if ticker in ticker_info_dict:
+                    info = ticker_info_dict[ticker]
+                    company_name = info.get('longName', '')
+                    
+                    # Determine match type
+                    match_type = "partial"
+                    if ticker == query_upper:
+                        match_type = "ticker"
+                    elif ticker.startswith(query_upper):
+                        match_type = "ticker"
+                    elif company_name.upper().startswith(query.upper()):
+                        match_type = "name"
+                    elif query.upper() in company_name.upper():
+                        match_type = "name"
+                    else:
+                        continue
+                    
+                    suggestions.append(SearchSuggestion(
+                        ticker=ticker,
+                        company_name=company_name,
+                        match_type=match_type
+                    ))
+            
+            return suggestions
+        
+        return []
 
     @measure_yfinance_call("ticker")
     def _create_suggestion_safe(self, ticker: str, query: str, query_upper: str) -> Optional[SearchSuggestion]:
@@ -218,16 +521,16 @@ class DiscoveryService:
         """
         Get stocks within a specific sector
         """
-        # For demo, return relevant stocks from popular list
-        sector_tickers = self._get_tickers_by_sector(sector)
-        stocks = []
+        sector_tickers = self._get_tickers_by_sector(sector)[:limit]
         
-        for ticker in sector_tickers[:limit]:
-            stock_data = self._get_stock_summary_safe(ticker)
-            if stock_data:
-                stocks.append(stock_data)
-                
-        return stocks
+        if sector_tickers:
+            # Batch fetch all ticker information
+            ticker_info_dict = self._batch_fetch_ticker_info(sector_tickers)
+            
+            # Create stock summaries from batch data
+            return self._batch_create_stock_summaries(ticker_info_dict)
+        
+        return []
 
     @trace_method("get_industries")
     def get_industries(self, sector: Optional[str] = None) -> List[IndustryInfo]:
@@ -267,14 +570,15 @@ class DiscoveryService:
         # For demo, return subset of popular stocks
         # In real implementation, filter by actual industry classification
         tickers = self.popular_tickers[:limit]
-        stocks = []
         
-        for ticker in tickers:
-            stock_data = self._get_stock_summary_safe(ticker)
-            if stock_data:
-                stocks.append(stock_data)
-                
-        return stocks
+        if tickers:
+            # Batch fetch all ticker information
+            ticker_info_dict = self._batch_fetch_ticker_info(tickers)
+            
+            # Create stock summaries from batch data
+            return self._batch_create_stock_summaries(ticker_info_dict)
+        
+        return []
 
     @trace_method("get_stocks_by_market_cap")
     def get_stocks_by_market_cap(self, category: str, limit: int = 100) -> List[StockSummary]:
@@ -290,19 +594,37 @@ class DiscoveryService:
         }
         
         min_cap, max_cap = cap_ranges.get(category, (0, None))
-        stocks = []
         
-        for ticker in self.popular_tickers:
+        # Batch fetch ticker information for all popular tickers
+        ticker_info_dict = self._batch_fetch_ticker_info(self.popular_tickers)
+        
+        # Filter by market cap and create summaries
+        stocks = []
+        for ticker, info in ticker_info_dict.items():
             if len(stocks) >= limit:
                 break
                 
-            stock_data = self._get_stock_summary_safe(ticker)
-            if stock_data and stock_data.market_cap:
-                market_cap_b = stock_data.market_cap / 1e9  # Convert to billions
+            market_cap = info.get('marketCap')
+            if market_cap:
+                market_cap_b = market_cap / 1e9  # Convert to billions
                 
                 # Check if within range
                 if market_cap_b >= min_cap and (max_cap is None or market_cap_b <= max_cap):
-                    stocks.append(stock_data)
+                    try:
+                        summary = StockSummary(
+                            ticker=ticker,
+                            company_name=info.get('longName', ticker),
+                            current_price=info.get('current_price'),
+                            price_change=info.get('price_change'),
+                            price_change_percent=info.get('price_change_percent'),
+                            volume=info.get('volume'),
+                            market_cap=market_cap,
+                            sector=info.get('sector'),
+                            industry=info.get('industry')
+                        )
+                        stocks.append(summary)
+                    except Exception:
+                        continue
                 
         return stocks
 
@@ -316,16 +638,32 @@ class DiscoveryService:
         """
         Get stocks within specific price range
         """
-        stocks = []
+        # Batch fetch ticker information for all popular tickers
+        ticker_info_dict = self._batch_fetch_ticker_info(self.popular_tickers)
         
-        for ticker in self.popular_tickers:
+        # Filter by price range and create summaries
+        stocks = []
+        for ticker, info in ticker_info_dict.items():
             if len(stocks) >= limit:
                 break
                 
-            stock_data = self._get_stock_summary_safe(ticker)
-            if (stock_data and 
-                min_price <= stock_data.current_price <= max_price):
-                stocks.append(stock_data)
+            current_price = info.get('current_price')
+            if current_price and min_price <= current_price <= max_price:
+                try:
+                    summary = StockSummary(
+                        ticker=ticker,
+                        company_name=info.get('longName', ticker),
+                        current_price=current_price,
+                        price_change=info.get('price_change'),
+                        price_change_percent=info.get('price_change_percent'),
+                        volume=info.get('volume'),
+                        market_cap=info.get('marketCap'),
+                        sector=info.get('sector'),
+                        industry=info.get('industry')
+                    )
+                    stocks.append(summary)
+                except Exception:
+                    continue
                 
         return stocks
 

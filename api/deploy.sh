@@ -48,6 +48,54 @@ docker-compose ps
 echo "🗄️  Running database migrations..."
 docker-compose exec stock-api poetry run alembic upgrade head
 
+# Verify endpoints are responding
+echo "🔍 Verifying endpoints..."
+sleep 10
+
+echo "Testing API health endpoint..."
+if curl -s http://localhost:8000/health > /dev/null 2>&1; then
+    echo "✅ API health endpoint responding"
+else
+    echo "⚠️  API health check failed"
+fi
+
+echo "Testing metrics endpoint..."
+if curl -s http://localhost:8001/metrics | grep -q "# HELP"; then
+    echo "✅ Metrics endpoint responding"
+else
+    echo "⚠️  Metrics endpoint failed"
+fi
+
+echo "Testing OTLP endpoint..."
+if curl -s -X POST http://localhost:4318/v1/traces \
+        -H "Content-Type: application/json" \
+        -d "{}" > /dev/null 2>&1; then
+    echo "✅ OTLP endpoint responding"
+else
+    echo "⚠️  OTLP endpoint failed"
+fi
+
+echo "Testing Jaeger UI..."
+if curl -s http://localhost:16686 | grep -q "Jaeger"; then
+    echo "✅ Jaeger UI responding"
+else
+    echo "⚠️  Jaeger UI failed"
+fi
+
+echo "Testing Prometheus..."
+if curl -s http://localhost:9090/-/healthy > /dev/null 2>&1; then
+    echo "✅ Prometheus responding"
+else
+    echo "⚠️  Prometheus failed"
+fi
+
+echo "Testing Grafana..."
+if curl -s http://localhost:3000/api/health > /dev/null 2>&1; then
+    echo "✅ Grafana responding"
+else
+    echo "⚠️  Grafana failed"
+fi
+
 echo "✅ Deployment complete!"
 echo ""
 echo "🌐 Service URLs:"
@@ -62,7 +110,18 @@ echo "🔧 Useful commands:"
 echo "  View logs:  docker-compose logs -f"
 echo "  Stop all:   docker-compose down"
 echo "  Restart:    docker-compose restart stock-api"
+echo "  Test:       ./test-endpoints.sh"
 echo ""
 echo "📊 Test the API:"
 echo "  curl http://localhost:8000/health"
 echo "  curl http://localhost:8000/api/stocks/AAPL"
+echo ""
+echo "📈 Monitor with Prometheus:"
+echo "  curl http://localhost:8001/metrics"
+echo "  # View metrics at: http://localhost:9090"
+echo ""
+echo "🔍 Test OTLP endpoint (Jaeger):"
+echo "  curl -X POST http://localhost:4318/v1/traces \\"
+echo "       -H 'Content-Type: application/json' \\"
+echo "       -d '{}'"
+echo "  # View traces at: http://localhost:16686"

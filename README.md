@@ -20,12 +20,14 @@ A comprehensive FastAPI-based application that provides stock price predictions,
 
 ### Infrastructure
 
-- **Observability**: Full OpenTelemetry integration with distributed tracing
+- **Observability**: Full OpenTelemetry integration with distributed tracing via OTLP
 - **Monitoring**: Prometheus metrics collection and Grafana dashboards
 - **Containerization**: Complete Docker setup with orchestration
 - **Performance**: Nginx reverse proxy with rate limiting and caching
 - **Database**: PostgreSQL with Alembic migrations
 - **Code Quality**: Decorator-based telemetry abstraction for clean service code
+
+> **Note**: This application uses the modern OTLP (OpenTelemetry Protocol) exporter for Jaeger instead of the deprecated Jaeger Thrift exporter, ensuring compatibility with Linux Docker containers and future OpenTelemetry versions.
 
 ## 📋 Prerequisites
 
@@ -129,6 +131,7 @@ deploy.bat   # Windows
 
 - **API Documentation**: <http://localhost:8000/docs>
 - **API Alternative Docs**: <http://localhost:8000/redoc>
+- **Metrics Endpoint**: <http://localhost:8001/metrics>
 - **Grafana Dashboard**: <http://localhost:3000> (admin/admin)
 - **Prometheus Metrics**: <http://localhost:9090>
 - **Jaeger Tracing**: <http://localhost:16686>
@@ -140,10 +143,16 @@ deploy.bat   # Windows
 # Check all services are running
 docker-compose ps
 
+# Run endpoint tests
+cd api
+./test-endpoints.sh      # Linux/macOS
+# OR
+test-endpoints.ps1       # Windows PowerShell
+
 # View logs
 docker-compose logs -f stock-api
 
-# Test API
+# Test API manually
 curl http://localhost:8000/health
 ```
 
@@ -433,9 +442,12 @@ python --version
 # If ports are in use, modify docker-compose.yml or stop conflicting services:
 # - PostgreSQL: port 5432
 # - API: port 8000  
+# - Metrics: port 8001
 # - Grafana: port 3000
 # - Prometheus: port 9090
-# - Jaeger: port 16686
+# - Jaeger UI: port 16686
+# - Jaeger OTLP HTTP: port 4318
+# - Jaeger OTLP gRPC: port 4317
 # - Redis: port 6379
 # - Nginx: ports 80, 443
 
@@ -521,6 +533,23 @@ If you can't use Docker, you can run everything locally:
 - Review Docker logs: `docker-compose logs`
 - Enable verbose logging in `.env`: `LOG_LEVEL=DEBUG`
 - Ensure all services are healthy: `docker-compose ps`
+
+### Testing OTLP Endpoint
+
+To verify the OTLP endpoint is working correctly:
+
+```bash
+# Test OTLP HTTP endpoint (should return empty response with 200 status)
+curl -X POST http://localhost:4318/v1/traces \
+     -H "Content-Type: application/json" \
+     -d "{}"
+
+# Check Jaeger UI for traces
+open http://localhost:16686
+
+# Check OpenTelemetry logs in application
+docker-compose logs stock-api | grep -i otlp
+```
 
 ## 📝 Contributing
 

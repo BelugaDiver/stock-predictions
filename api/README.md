@@ -73,7 +73,7 @@ DEBUG=true
 API_V1_STR=/api
 
 # OpenTelemetry Configuration
-JAEGER_ENDPOINT=http://localhost:14268/api/traces
+JAEGER_ENDPOINT=http://localhost:4318/v1/traces
 PROMETHEUS_PORT=8001
 OTEL_CONSOLE_EXPORT=false
 OTEL_SERVICE_NAME=stock-prediction-api
@@ -206,6 +206,8 @@ def my_service_method(self, ticker: str):
 - **Jaeger**: Distributed tracing at http://localhost:16686
 - **Prometheus**: Metrics collection at http://localhost:9090
 - **Grafana**: Dashboards at http://localhost:3000
+
+> **Note**: This application uses the modern OTLP (OpenTelemetry Protocol) exporter to send traces to Jaeger on port 4318, replacing the deprecated Jaeger Thrift exporter. This ensures compatibility with Linux Docker containers and eliminates dependency issues.
 
 ## 🏗️ Development
 

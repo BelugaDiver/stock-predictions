@@ -50,6 +50,28 @@ REM Run database migrations
 echo 🗄️  Running database migrations...
 docker-compose exec stock-api poetry run alembic upgrade head
 
+REM Verify endpoints are responding
+echo 🔍 Verifying endpoints...
+timeout /t 10 /nobreak >nul
+
+echo Testing API health endpoint...
+curl -s http://localhost:8000/health || echo ⚠️  API health check failed
+
+echo Testing metrics endpoint...
+curl -s http://localhost:8001/metrics | findstr "# HELP" >nul && echo ✅ Metrics endpoint responding || echo ⚠️  Metrics endpoint failed
+
+echo Testing OTLP endpoint...
+curl -s -X POST http://localhost:4318/v1/traces -H "Content-Type: application/json" -d "{}" >nul && echo ✅ OTLP endpoint responding || echo ⚠️  OTLP endpoint failed
+
+echo Testing Jaeger UI...
+curl -s http://localhost:16686 | findstr "Jaeger" >nul && echo ✅ Jaeger UI responding || echo ⚠️  Jaeger UI failed
+
+echo Testing Prometheus...
+curl -s http://localhost:9090/-/healthy >nul && echo ✅ Prometheus responding || echo ⚠️  Prometheus failed
+
+echo Testing Grafana...
+curl -s http://localhost:3000/api/health >nul && echo ✅ Grafana responding || echo ⚠️  Grafana failed
+
 echo ✅ Deployment complete!
 echo.
 echo 🌐 Service URLs:
@@ -68,5 +90,19 @@ echo.
 echo 📊 Test the API:
 echo   curl http://localhost:8000/health
 echo   curl http://localhost:8000/api/stocks/AAPL
+echo.
+echo 📈 Monitor with Prometheus:
+echo   curl http://localhost:8001/metrics
+echo   # View metrics at: http://localhost:9090
+echo   # Sample queries:
+echo   #   rate(http_requests_total[5m])
+echo   #   yfinance_requests_total
+echo   #   stock_predictions_total
+echo.
+echo 🔍 Test OTLP endpoint (Jaeger):
+echo   curl -X POST http://localhost:4318/v1/traces ^
+echo        -H "Content-Type: application/json" ^
+echo        -d "{}"
+echo   # View traces at: http://localhost:16686
 
 pause
