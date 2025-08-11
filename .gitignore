@@ -55,6 +55,29 @@ Thumbs.db
 htmlcov/
 .pytest_cache/
 
+# Next.js
+ui/.next/
+ui/out/
+ui/build/
+ui/dist/
+ui/node_modules/
+ui/.env*.local
+ui/.vercel
+ui/.turbo
+
+# TypeScript
+ui/*.tsbuildinfo
+
+# ESLint
+ui/.eslintcache
+
+# Yarn
+ui/.yarn/cache/
+ui/.yarn/unplugged/
+ui/.yarn/build-state.yml
+ui/.yarn/install-state.gz
+ui/.pnp.*
+
 # Project specific
 /alembic/versions/*_initial.py
 !alembic/versions/.gitkeep
