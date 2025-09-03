@@ -57,8 +57,5 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
-# Legacy support - keep for backward compatibility
+# Legacy support - keep for backward compatibility during transition
 DATABASE_URL = settings.database_url
-
-# Database URL
-DATABASE_URL = f"postgresql://{settings.POSTGRES_USER}:{settings.POSTGRES_PASSWORD}@{settings.POSTGRES_SERVER}:{settings.POSTGRES_PORT}/{settings.POSTGRES_DB}"

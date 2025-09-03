@@ -1,5 +1,8 @@
-from typing import List, Optional
+from typing import List, Optional, Tuple, Union
 from datetime import date, timedelta
+from functools import partial
+import asyncio
+import time
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_
 from ..models.daily import Daily
@@ -20,6 +23,23 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Model cache configuration
+MODEL_CACHE_TTL = 300  # 5 minutes
+CONFIDENCE_INTERVAL_RANGE = 0.02  # 2%
+
+# Simple in-memory model cache
+_model_cache = {}
+
+class ModelCacheEntry:
+    def __init__(self, model, scaler, features, created_at: float):
+        self.model = model
+        self.scaler = scaler
+        self.features = features
+        self.created_at = created_at
+    
+    def is_expired(self, ttl_seconds: int = MODEL_CACHE_TTL) -> bool:
+        return time.time() - self.created_at > ttl_seconds
+
 class StockService:
     def __init__(self):
         pass
@@ -27,10 +47,15 @@ class StockService:
     @trace_method("get_stock_data")
     @measure_yfinance_call("ticker")
     @log_method_call(include_args=True)
-    def get_stock_data(self, ticker: str, start_date: date, end_date: date) -> pd.DataFrame:
+    async def get_stock_data(self, ticker: str, start_date: date, end_date: date) -> pd.DataFrame:
         """Retrieve stock data for a given ticker and date range using Yahoo Finance, returns a DataFrame"""
         try:
-            df = yf.download(ticker, start=start_date, end=end_date + timedelta(days=1), progress=False)
+            # Run yfinance in executor to avoid blocking event loop
+            loop = asyncio.get_running_loop()
+            df = await loop.run_in_executor(
+                None, 
+                partial(yf.download, ticker, start=start_date, end=end_date + timedelta(days=1), progress=False)
+            )
             
             if df.empty:
                 logger.warning(f"No data returned for ticker {ticker}")
@@ -47,14 +72,14 @@ class StockService:
     @trace_method("predict_stock_price")
     @record_prediction_metrics("ticker", "days", "random_forest")
     @log_method_call(include_args=True, include_result=True)
-    def predict_stock_price(
+    async def predict_stock_price(
         self, 
         ticker: str, 
         days: int = 7,
         lookback_days: int = 90
     ) -> List[StockPrediction]:
         """
-        Predict stock prices for the next 'days' days
+        Predict stock prices for the next 'days' days with model caching
         
         Args:
             ticker: Stock ticker symbol
@@ -69,16 +94,22 @@ class StockService:
             end_date = date.today()
             start_date = end_date - timedelta(days=lookback_days)
             
-            stocks = self._fetch_historical_data(ticker, start_date, end_date)
+            # Create cache key for model
+            cache_key = f"{ticker}_{lookback_days}_{end_date}"
+            
+            # Check if model is cached and valid
+            model, scaler, features = self._get_cached_model(cache_key, ticker, start_date, end_date)
+            
+            if model is None:
+                return []
+            
+            # Get latest data for prediction base
+            stocks = await self._fetch_historical_data(ticker, start_date, end_date)
             if stocks.empty:
                 return []
             
             df = self._prepare_ml_data(stocks)
             if df is None:
-                return []
-            
-            model, scaler, features = self._train_model(df)
-            if model is None:
                 return []
             
             predictions = self._generate_predictions(model, scaler, df, features, end_date, days)
@@ -88,10 +119,54 @@ class StockService:
             logger.error(f"Error predicting stock price for {ticker}: {e}")
             return []
     
+    def _get_cached_model(self, cache_key: str, ticker: str, start_date: date, end_date: date) -> Tuple[Optional[RandomForestRegressor], Optional[MinMaxScaler], Optional[List[str]]]:
+        """Get model from cache or train new one if expired/missing"""
+        global _model_cache
+        
+        # Check if cached model exists and is valid
+        if cache_key in _model_cache:
+            entry = _model_cache[cache_key]
+            if not entry.is_expired():
+                logger.info(f"Using cached model for {ticker}")
+                return entry.model, entry.scaler, entry.features
+            else:
+                logger.info(f"Model cache expired for {ticker}, retraining...")
+                del _model_cache[cache_key]
+        
+        # Train new model and cache it
+        logger.info(f"Training new model for {ticker}")
+        
+        # We need to fetch data synchronously here for training
+        # This is acceptable as training happens infrequently due to caching
+        try:
+            df = yf.download(ticker, start=start_date, end=end_date + timedelta(days=1), progress=False)
+            if df.empty:
+                return None, None, None
+                
+            df = df.reset_index()
+            df['Ticker'] = ticker
+            df = self._prepare_ml_data(df)
+            
+            if df is None:
+                return None, None, None
+                
+            model, scaler, features = self._train_model(df)
+            
+            if model is not None:
+                # Cache the trained model
+                _model_cache[cache_key] = ModelCacheEntry(model, scaler, features, time.time())
+                logger.info(f"Model cached for {ticker}")
+            
+            return model, scaler, features
+            
+        except Exception as e:
+            logger.error(f"Error training model for {ticker}: {e}")
+            return None, None, None
+    
     @trace_method("fetch_historical_data")
-    def _fetch_historical_data(self, ticker: str, start_date: date, end_date: date) -> pd.DataFrame:
+    async def _fetch_historical_data(self, ticker: str, start_date: date, end_date: date) -> pd.DataFrame:
         """Fetch historical data for ML training"""
-        return self.get_stock_data(ticker, start_date, end_date)
+        return await self.get_stock_data(ticker, start_date, end_date)
     
     @trace_method("prepare_ml_data")
     def _prepare_ml_data(self, stocks: pd.DataFrame) -> Optional[pd.DataFrame]:
@@ -119,7 +194,7 @@ class StockService:
     
     @trace_method("train_model")
     @time_operation("model_training")
-    def _train_model(self, df: pd.DataFrame) -> tuple:
+    def _train_model(self, df: pd.DataFrame) -> Tuple[Optional[RandomForestRegressor], Optional[MinMaxScaler], Optional[List[str]]]:
         """Train the ML model and return model, scaler, and feature list"""
         try:
             # Prepare features and target
@@ -160,7 +235,7 @@ class StockService:
                 pred_close = model.predict(last_data_scaled)[0]
                 
                 # Add some randomness for confidence interval (simplified)
-                confidence_range = pred_close * 0.02  # 2% range
+                confidence_range = pred_close * CONFIDENCE_INTERVAL_RANGE
                 
                 # Add to predictions
                 current_date += timedelta(days=1)
@@ -192,7 +267,7 @@ class StockService:
     
     @trace_method("get_stock_recommendation")
     @log_method_call(include_args=True, include_result=True)
-    def get_stock_recommendation(self, ticker: str) -> Optional[StockRecommendation]:
+    async def get_stock_recommendation(self, ticker: str) -> Optional[StockRecommendation]:
         """
         Generate a stock recommendation based on technical indicators
         
@@ -207,7 +282,7 @@ class StockService:
             end_date = date.today()
             start_date = end_date - timedelta(days=60)  # 2 months of data
             
-            stocks = self.get_stock_data(ticker, start_date, end_date)
+            stocks = await self.get_stock_data(ticker, start_date, end_date)
             if stocks.empty:
                 return None
             

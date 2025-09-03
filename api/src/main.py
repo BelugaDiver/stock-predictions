@@ -13,8 +13,9 @@ from .telemetry import init_telemetry, telemetry
 # Initialize OpenTelemetry before creating FastAPI app
 init_telemetry()
 
-# Create database tables
-Base.metadata.create_all(bind=engine)
+# NOTE: Database tables should be created via Alembic migrations, not auto-created
+# Remove the following line in production and use proper migrations:
+# Base.metadata.create_all(bind=engine)
 
 # Initialize FastAPI app
 app = FastAPI(

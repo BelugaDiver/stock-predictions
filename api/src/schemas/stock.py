@@ -22,7 +22,6 @@ class Stock(StockBase):
         from_attributes = True
 
 class StockPredictionRequest(BaseModel):
-    ticker: str
     days: int = Field(gt=0, le=30, description="Number of days to predict")
 
 class StockPrediction(BaseModel):
