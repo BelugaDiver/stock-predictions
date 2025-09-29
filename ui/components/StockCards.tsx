@@ -19,8 +19,10 @@ export default function StockCards() {
       try {
         setLoading(true)
         setError(null)
-        const trendingStocks = await apiClient.getTrendingStocks(6)
-        setStocks(trendingStocks)
+  console.log('[StockCards] Fetching trending stocks', { limit: 6 })
+  const trendingStocks = await apiClient.getTrendingStocks(6)
+  console.log('[StockCards] Received trending stocks', { count: trendingStocks.length })
+  setStocks(trendingStocks)
       } catch (err) {
         console.error('Failed to fetch trending stocks:', err)
         setError('Failed to load trending stocks. Please try again later.')

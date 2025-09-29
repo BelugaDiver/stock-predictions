@@ -70,7 +70,7 @@ echo Testing Prometheus...
 curl -s http://localhost:9090/-/healthy >nul && echo [OK] Prometheus responding || echo [WARNING] Prometheus failed
 
 echo Testing Grafana...
-curl -s http://localhost:3000/api/health >nul && echo [OK] Grafana responding || echo [WARNING] Grafana failed
+curl -s http://localhost:4000/api/health >nul && echo [OK] Grafana responding || echo [WARNING] Grafana failed
 
 echo [SUCCESS] Deployment complete!
 echo.
@@ -80,7 +80,7 @@ echo   API Docs:   http://localhost:8000/docs
 echo   Metrics:    http://localhost:8001/metrics
 echo   Jaeger:     http://localhost:16686
 echo   Prometheus: http://localhost:9090
-echo   Grafana:    http://localhost:3000 (admin/admin)
+echo   Grafana:    http://localhost:4000 (admin/admin)
 echo.
 echo [COMMANDS] Useful commands:
 echo   View logs:  docker-compose logs -f

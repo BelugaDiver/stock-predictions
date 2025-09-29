@@ -90,7 +90,7 @@ else
 fi
 
 echo "Testing Grafana..."
-if curl -s http://localhost:3000/api/health > /dev/null 2>&1; then
+if curl -s http://localhost:4000/api/health > /dev/null 2>&1; then
     echo "✅ Grafana responding"
 else
     echo "⚠️  Grafana failed"
@@ -104,7 +104,7 @@ echo "  API Docs:   http://localhost:8000/docs"
 echo "  Metrics:    http://localhost:8001/metrics"
 echo "  Jaeger:     http://localhost:16686"
 echo "  Prometheus: http://localhost:9090"
-echo "  Grafana:    http://localhost:3000 (admin/admin)"
+echo "  Grafana:    http://localhost:4000 (admin/admin)"
 echo ""
 echo "🔧 Useful commands:"
 echo "  View logs:  docker-compose logs -f"

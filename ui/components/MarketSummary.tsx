@@ -29,25 +29,49 @@ export default function MarketSummary() {
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
+    const abortController = new AbortController()
+    let isMounted = true
+
+    const extractPrice = (rec: any): number => {
+      if (!rec) return 0
+      // Prefer normalized fields inserted by api.getStockData
+      const candidates = [rec.close, rec.price, rec.adjClose, rec.adj_close]
+      for (const c of candidates) {
+        if (typeof c === 'number' && !Number.isNaN(c)) return c
+      }
+      // Fallback: first numeric value that looks like a price
+      for (const val of Object.values(rec)) {
+        if (typeof val === 'number' && val > 0.01) return val
+      }
+      return 0
+    }
+
     const fetchMarketData = async () => {
       try {
+        if (!isMounted) return
         setLoading(true)
         setError(null)
-        
-        // Search for market ETFs to get market summary data
-        const marketPromises = MARKET_INDICES.map(async (index) => {
+
+    const marketPromises = MARKET_INDICES.map(async (index) => {
           try {
-            const searchResults = await apiClient.searchStocks(index.ticker, 1)
-            if (searchResults.length > 0) {
-              const stock = searchResults[0]
-              return {
-                index: index.name,
-                value: (stock.current_price || 0) * index.multiplier,
-                change: stock.price_change || 0,
-                changePercent: stock.price_change_percent || 0
-              }
+      console.log('[MarketSummary] Fetching stock data', { ticker: index.ticker })
+      const stockData = await apiClient.getStockData(index.ticker)
+      console.log('[MarketSummary] Received stock data', { ticker: index.ticker, length: stockData.length })
+            if (stockData.length === 0) return null
+
+            const currentData = stockData[stockData.length - 1]
+            const previousData = stockData.length > 1 ? stockData[stockData.length - 2] : null
+            const currentPrice = extractPrice(currentData)
+            const previousPrice = previousData ? extractPrice(previousData) : currentPrice
+            const change = currentPrice - previousPrice
+            const changePercent = previousPrice !== 0 ? (change / previousPrice) * 100 : 0
+
+            return {
+              index: index.name,
+              value: currentPrice * index.multiplier,
+              change,
+              changePercent
             }
-            return null
           } catch (err) {
             console.error(`Failed to fetch ${index.ticker}:`, err)
             return null
@@ -55,40 +79,57 @@ export default function MarketSummary() {
         })
 
         const results = await Promise.all(marketPromises)
-        const validResults = results.filter((result): result is MarketData => result !== null)
-        
-        // If we don't have enough real data, add some calculated market sentiment
-        if (validResults.length < 2) {
+        const validResults = results.filter((r): r is MarketData => r !== null)
+
+        if (!isMounted) return
+
+        // Fallback augmentation: derive synthetic entries only if fewer than 2 real indices
+    if (validResults.length < 2) {
           try {
-            // Get sector overview to calculate overall market sentiment
-            const sectorData = await apiClient.getSectorOverview()
-            const avgChange = sectorData.length > 0 
-              ? sectorData.reduce((sum, sector) => sum + sector.change, 0) / sectorData.length 
+      console.log('[MarketSummary] Fetching sector overview (fallback path)')
+      const sectorData = await apiClient.getSectorOverview()
+      console.log('[MarketSummary] Received sector overview', { sectors: sectorData.length })
+            const avgChange = sectorData.length > 0
+              ? sectorData.reduce((sum, sector) => sum + sector.change, 0) / sectorData.length
               : 0
-            
-            // Add synthetic market data based on sector performance
-            const syntheticData: MarketData[] = [
-              { index: 'Market Average', value: 4500, change: avgChange * 45, changePercent: avgChange },
-              { index: 'Sector Composite', value: 3200, change: avgChange * 32, changePercent: avgChange }
-            ]
-            
+
+            // Instead of arbitrary multipliers, scale change to plausible index moves using a nominal base
+            const nominalBases = [4500, 3200]
+            const syntheticData: MarketData[] = nominalBases.map((base, i) => {
+              const value = base * (1 + avgChange / 100)
+              const change = value - base
+              return {
+                index: i === 0 ? 'Market Average' : 'Sector Composite',
+                value,
+                change,
+                changePercent: avgChange
+              }
+            })
+            console.log('[MarketSummary] Applying synthetic fallback data')
             setMarketData([...validResults, ...syntheticData])
-          } catch (err) {
+          } catch (e) {
+            console.warn('[MarketSummary] Fallback sector overview failed, using validResults only')
             setMarketData(validResults)
           }
         } else {
+          console.log('[MarketSummary] Using real market data only')
           setMarketData(validResults)
+          console.log(validResults)
         }
-        
       } catch (err) {
+        if (!isMounted) return
         console.error('Failed to fetch market data:', err)
         setError('Failed to load market data. Please try again later.')
       } finally {
-        setLoading(false)
+        if (isMounted) setLoading(false)
       }
     }
 
     fetchMarketData()
+    return () => {
+      isMounted = false
+      abortController.abort()
+    }
   }, [])
 
   const getTrendIcon = (change: number) => {

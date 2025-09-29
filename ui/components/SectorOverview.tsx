@@ -17,7 +17,9 @@ export default function SectorOverview() {
       try {
         setLoading(true)
         setError(null)
+        console.log('[SectorOverview] Fetching sector overview')
         const sectorData = await apiClient.getSectorOverview()
+        console.log('[SectorOverview] Received sector overview', { sectors: sectorData.length })
         setSectors(sectorData)
       } catch (err) {
         console.error('Failed to fetch sector data:', err)
@@ -104,7 +106,7 @@ export default function SectorOverview() {
               {getTrendIcon(sector.change)}
             </div>
           </CardHeader>
-          
+
           <CardContent className="space-y-3">
             <div className="flex items-center justify-between">
               <span className="text-sm text-muted-foreground">Change</span>
@@ -112,12 +114,12 @@ export default function SectorOverview() {
                 {sector.change > 0 ? '+' : ''}{sector.change.toFixed(2)}%
               </Badge>
             </div>
-            
+
             <div className="flex items-center justify-between">
               <span className="text-sm text-muted-foreground">Stocks</span>
               <span className="text-sm font-medium">{sector.stocks}</span>
             </div>
-            
+
             <div className="flex items-center justify-between">
               <span className="text-sm text-muted-foreground">Volume</span>
               <span className="text-sm font-medium">{sector.volume}</span>
